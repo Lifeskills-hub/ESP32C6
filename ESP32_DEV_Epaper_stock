@@ -1,0 +1,224 @@
+#include <GxEPD2_BW.h>
+#include <WiFiManager.h> // WiFiManager library for dynamic WiFi configuration
+#include <HTTPClient.h>  // For making HTTP requests
+#include <ArduinoJson.h> // For parsing JSON response
+
+// --- Pin map (Waveshare ESP32 Driver Board) ---
+#define PIN_BUSY 25
+#define PIN_RST  26
+#define PIN_DC   27
+#define PIN_CS   15
+#define PIN_SCK  13
+#define PIN_MOSI 14
+#define PIN_MISO -1
+// #define PIN_EPD_PWR 12  // Uncomment if needed
+
+GxEPD2_BW<GxEPD2_290_T5D, GxEPD2_290_T5D::HEIGHT> display(
+  GxEPD2_290_T5D(PIN_CS, PIN_DC, PIN_RST, PIN_BUSY)
+);
+
+// API settings
+const char* FINNHUB_API_KEY = "d2u209hr01qr5a74dc90d2u209hr01qr5a74dc9g";
+const char* COINGECKO_API_KEY = "CG-fSKnTDQ2r7Qj39hFGb8NTp18";
+const char* STOCK_SYMBOL = "MSTR";
+const char* CRYPTO_SYMBOL = "crypto-com-chain"; // CoinGecko ID for CRO
+
+// Refresh settings
+const unsigned long REFRESH_INTERVAL = 30000; // 30 seconds
+unsigned long lastRefresh = 0;
+int refreshCount = 0;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("=== 2.9\" T5D test ===");
+
+  // Enable panel power if applicable
+  #ifdef PIN_EPD_PWR
+    pinMode(PIN_EPD_PWR, OUTPUT);
+    digitalWrite(PIN_EPD_PWR, HIGH);
+    delay(50);
+  #endif
+
+  pinMode(PIN_BUSY, INPUT);
+  SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI);
+
+  // Initialize display
+  display.init(115200, true, 2, false); // Verbose mode for debugging
+  display.setRotation(1);
+  display.setTextColor(GxEPD_BLACK);
+
+  // Clear screen
+  display.fillScreen(GxEPD_WHITE);
+  display.display(true); // Full refresh
+  delay(500);
+
+  // Initialize WiFiManager
+  WiFiManager wifiManager;
+  wifiManager.setTimeout(180); // 3 minutes timeout for WiFi connection
+  display.setCursor(0, 20);
+  display.println("Connecting to WiFi...");
+  display.display(true); // Full refresh
+
+  // Start WiFiManager (creates AP named "ESP32-Setup")
+  if (!wifiManager.autoConnect("ESP32-Setup", "12345678")) {
+    Serial.println("WiFi connection failed!");
+    display.fillScreen(GxEPD_WHITE);
+    display.setCursor(0, 20);
+    display.println("WiFi Failed");
+    display.display(true);
+    delay(2000); // Show error for 2 seconds
+    while (1); // Halt on WiFi failure
+  } else {
+    Serial.println("WiFi connected: " + WiFi.SSID());
+    Serial.println("IP address: " + WiFi.localIP().toString());
+    display.fillScreen(GxEPD_WHITE);
+    display.setCursor(0, 20);
+    display.println("WiFi Connected");
+    display.println(WiFi.SSID());
+    display.display(true);
+    delay(2000); // Show success for 2 seconds
+  }
+
+  // Initial full display
+  updateDisplay();
+}
+
+void updateDisplay() {
+  unsigned long start = millis();
+
+  // Fetch MSTR stock data from Finnhub
+  String stockDisplay = "N/A";
+  String stockPriceDisplay = "N/A";
+  String stockPercentDisplay = "N/A";
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = String("https://finnhub.io/api/v1/quote?symbol=") + STOCK_SYMBOL + "&token=" + FINNHUB_API_KEY;
+    http.begin(url);
+    int httpCode = http.GET();
+
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      DynamicJsonDocument doc(1024);
+      deserializeJson(doc, payload);
+      float price = doc["c"];
+      float percentChange = doc["dp"];
+      if (price > 0) {
+        stockPriceDisplay = "$" + String(price, 2);
+        stockPercentDisplay = (percentChange >= 0 ? "+" : "") + String(percentChange, 2) + "%";
+        stockDisplay = STOCK_SYMBOL;
+      } else {
+        stockPriceDisplay = "Error";
+        stockPercentDisplay = "Error";
+        stockDisplay = STOCK_SYMBOL;
+      }
+    } else {
+      Serial.println("Finnhub request failed: " + String(httpCode));
+      stockPriceDisplay = "Error";
+      stockPercentDisplay = "Error";
+      stockDisplay = STOCK_SYMBOL;
+    }
+    http.end();
+  }
+
+  // Fetch CRO crypto data from CoinGecko
+  String cryptoDisplay = "CRO";
+  String cryptoPriceDisplay = "N/A";
+  String cryptoPercentDisplay = "N/A";
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    String url = String("https://api.coingecko.com/api/v3/coins/markets?ids=") + CRYPTO_SYMBOL + "&vs_currency=usd&x_cg_api_key=" + COINGECKO_API_KEY;
+    http.begin(url);
+    int httpCode = http.GET();
+
+    if (httpCode == HTTP_CODE_OK) {
+      String payload = http.getString();
+      DynamicJsonDocument doc(1024);
+      deserializeJson(doc, payload);
+      if (doc.is<JsonArray>() && doc.size() > 0) {
+        float price = doc[0]["current_price"];
+        float percentChange = doc[0]["price_change_percentage_24h"];
+        if (price > 0) {
+          cryptoPriceDisplay = "$" + String(price, 4);
+          cryptoPercentDisplay = (percentChange >= 0 ? "+" : "") + String(percentChange, 2) + "%";
+        } else {
+          cryptoPriceDisplay = "Error";
+          cryptoPercentDisplay = "Error";
+        }
+      } else {
+        cryptoPriceDisplay = "Error";
+        cryptoPercentDisplay = "Error";
+      }
+    } else {
+      Serial.println("CoinGecko request failed: " + String(httpCode));
+      cryptoPriceDisplay = "Error";
+      cryptoPercentDisplay = "Error";
+    }
+    http.end();
+  }
+
+  // Full display (MSTR and CRO)
+  display.fillScreen(GxEPD_WHITE);
+
+  // MSTR (left column, centered at x=74)
+  // Ticker
+  display.setTextSize(4);
+  int16_t tbx, tby; uint16_t tbw, tbh;
+  display.getTextBounds(stockDisplay, 0, 0, &tbx, &tby, &tbw, &tbh);
+  int16_t x = (display.width() / 4) - (tbw / 2); // Center in left half (296/4 = 74)
+  int16_t y = 20;
+  display.setCursor(x, y);
+  display.println(stockDisplay);
+
+  // Price
+  display.setTextSize(2);
+  display.getTextBounds(stockPriceDisplay, 0, 0, &tbx, &tby, &tbw, &tbh);
+  x = (display.width() / 4) - (tbw / 2);
+  y += tbh + 30; // 30-pixel gap
+  display.setCursor(x, y);
+  display.println(stockPriceDisplay);
+
+  // Percentage
+  display.getTextBounds(stockPercentDisplay, 0, 0, &tbx, &tby, &tbw, &tbh);
+  x = (display.width() / 4) - (tbw / 2);
+  y += tbh + 10; // 10-pixel gap
+  display.setCursor(x, y);
+  display.println(stockPercentDisplay);
+
+  // CRO (right column, centered at x=222)
+  // Ticker
+  display.setTextSize(4);
+  display.getTextBounds(cryptoDisplay, 0, 0, &tbx, &tby, &tbw, &tbh);
+  x = (3 * display.width() / 4) - (tbw / 2); // Center in right half (3*296/4 = 222)
+  y = 20;
+  display.setCursor(x, y);
+  display.println(cryptoDisplay);
+
+  // Price
+  display.setTextSize(2);
+  display.getTextBounds(cryptoPriceDisplay, 0, 0, &tbx, &tby, &tbw, &tbh);
+  x = (3 * display.width() / 4) - (tbw / 2);
+  y += tbh + 30;
+  display.setCursor(x, y);
+  display.println(cryptoPriceDisplay);
+
+  // Percentage
+  display.getTextBounds(cryptoPercentDisplay, 0, 0, &tbx, &tby, &tbw, &tbh);
+  x = (3 * display.width() / 4) - (tbw / 2);
+  y += tbh + 10;
+  display.setCursor(x, y);
+  display.println(cryptoPercentDisplay);
+
+  display.display(true); // Full refresh
+
+  Serial.println("Update took: " + String(millis() - start) + " ms");
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastRefresh >= REFRESH_INTERVAL) {
+    lastRefresh = currentMillis;
+    refreshCount++;
+    updateDisplay(); // Always full refresh
+  }
+}
