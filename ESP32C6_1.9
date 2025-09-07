@@ -1,0 +1,201 @@
+#include <WiFiManager.h>
+#include <HTTPClient.h>
+#include <Arduino_GFX_Library.h>
+
+#define SCREEN_WIDTH 320
+#define SCREEN_HEIGHT 170
+
+// Finnhub API key
+const char* finnhubKey = "cviaiuhr01qks9q9b24gcviaiuhr01qks9q9b250";
+
+// Display setup
+Arduino_DataBus *bus = new Arduino_HWSPI(6, 7, 5, 4);
+Arduino_GFX *gfx = new Arduino_ST7789(bus, 14, 1, true, 170, 320, 35, 0, 35, 2);
+
+// Battery monitor setup
+#define BATTERY_ADC_PIN 1
+const float VREF = 3.3;
+const float ADC_MAX = 4095.0;
+const float CALIBRATED_MULTIPLIER = 2.10;
+
+// Ticker strings
+String mstrPrice = "Loading...", mstrChange = "";
+String croPrice = "Loading...", croChange = "";
+String btcPrice = "Loading...", btcChange = "";
+
+void setup() {
+  Serial.begin(115200);
+  gfx->begin();
+  gfx->setRotation(3);
+  gfx->fillScreen(BLACK);
+  gfx->setTextColor(WHITE);
+  gfx->setTextSize(2);
+  gfx->setCursor(20, 80);
+  gfx->println("WiFi Setup...");
+
+  WiFiManager wm;
+  bool res = wm.autoConnect("ESP32C6-Setup");
+  if (!res) {
+    gfx->fillScreen(RED);
+    gfx->setCursor(20, 80);
+    gfx->println("WiFi Failed");
+    delay(3000);
+    ESP.restart();
+  }
+
+  gfx->fillScreen(BLACK);
+  gfx->setCursor(20, 80);
+  gfx->println("WiFi Connected");
+  delay(1000);
+
+  fetchMSTR();
+  fetchCRO();
+  fetchBTC();
+}
+
+float getValue(String json, String key) {
+  int start = json.indexOf(key);
+  if (start == -1) return -1;
+  start += key.length();
+  int end = json.indexOf(",", start);
+  if (end == -1) end = json.indexOf("}", start);
+  return json.substring(start, end).toFloat();
+}
+
+void fetchMSTR() {
+  HTTPClient http;
+  String url = "https://finnhub.io/api/v1/quote?symbol=MSTR&token=" + String(finnhubKey);
+  http.begin(url);
+  int httpCode = http.GET();
+
+  if (httpCode == 200) {
+    String payload = http.getString();
+    float current = getValue(payload, "\"c\":");
+    float previous = getValue(payload, "\"pc\":");
+
+    if (current > 0 && previous > 0) {
+      float change = current - previous;
+      float percent = (change / previous) * 100;
+      mstrPrice = "$" + String(current, 2);
+      mstrChange = String((change >= 0 ? "+" : "")) + String(change, 2) + " / " + String(percent, 2) + "%";
+    }
+  }
+  http.end();
+}
+
+void fetchCRO() {
+  HTTPClient http;
+  http.begin("https://api.coingecko.com/api/v3/simple/price?ids=crypto-com-chain&vs_currencies=usd&include_24hr_change=true");
+  int httpCode = http.GET();
+
+  if (httpCode == 200) {
+    String payload = http.getString();
+    int pStart = payload.indexOf("usd\":") + 5;
+    int pEnd = payload.indexOf(",", pStart);
+    if (pEnd == -1) pEnd = payload.indexOf("}", pStart);
+    float price = payload.substring(pStart, pEnd).toFloat();
+
+    int cStart = payload.indexOf("usd_24h_change\":") + 17;
+    int cEnd = payload.indexOf("}", cStart);
+    float change = payload.substring(cStart, cEnd).toFloat();
+
+    croPrice = "$" + String(price, 4);
+    croChange = String((change >= 0 ? "+" : "")) + String(change, 2) + "%";
+  } else if (httpCode == 429) {
+    croPrice = "Rate Limit";
+    croChange = "Exceeded";
+  }
+  http.end();
+}
+
+void fetchBTC() {
+  HTTPClient http;
+  http.begin("https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=BTC&convert=USD");
+  http.addHeader("X-CMC_PRO_API_KEY", "e74dfed6-0567-423b-9f51-458184caef80");
+  http.addHeader("Accepts", "application/json");
+
+  int httpCode = http.GET();
+  if (httpCode == 200) {
+    String payload = http.getString();
+
+    int pStart = payload.indexOf("\"price\":") + 8;
+    int pEnd = payload.indexOf(",", pStart);
+    float price = payload.substring(pStart, pEnd).toFloat();
+
+    int cStart = payload.indexOf("\"percent_change_24h\":") + 23;
+    int cEnd = payload.indexOf(",", cStart);
+    float change = payload.substring(cStart, cEnd).toFloat();
+
+    btcPrice = "$" + String(price, 2);
+    btcChange = String((change >= 0 ? "+" : "")) + String(change, 2) + "%";
+  } else {
+    btcPrice = "Error";
+    btcChange = "Check API";
+  }
+  http.end();
+}
+
+void centerText(const char* text, int textSize, int yOffset) {
+  int16_t x1, y1;
+  uint16_t w, h;
+  gfx->setTextSize(textSize);
+  gfx->getTextBounds(text, 64, 0, &x1, &y1, &w, &h);
+  int x = 64 + ((SCREEN_WIDTH - 64 - w) / 2);
+  gfx->setCursor(x, yOffset);
+  gfx->println(text);
+}
+
+void drawBatteryStatus(float voltage) {
+  int x = SCREEN_WIDTH - 60;  // Top-right corner
+  int y = 10;
+  int w = 50;  // Horizontal battery width
+  int h = 20;  // Battery height
+  int nubW = 6, nubH = 8;
+
+  // Outline
+  gfx->drawRect(x, y, w, h, WHITE);
+  gfx->fillRect(x + w, y + (h - nubH) / 2, nubW, nubH, WHITE);  // Battery nub
+
+  // Fill level
+  float percent = constrain((voltage - 3.0) / 1.2, 0.0, 1.0);
+  int fillWidth = percent * (w - 6);
+  uint16_t fillColor = voltage >= 4.0 ? GREEN : (voltage >= 3.6 ? YELLOW : RED);
+  gfx->fillRect(x + 3, y + 3, fillWidth, h - 6, fillColor);
+
+  // Percentage text below icon
+  gfx->setTextSize(1);
+  gfx->setTextColor(WHITE);
+  gfx->setCursor(x, y + h + 2);
+  gfx->printf("%.0f%%", percent * 100);
+}
+
+void showTickerScreen(const char* symbol, String price, String change) {
+  gfx->fillScreen(BLACK);
+  uint16_t barColor = change.startsWith("-") ? RED : GREEN;
+  gfx->fillRect(0, 0, SCREEN_WIDTH / 5, SCREEN_HEIGHT, barColor);
+
+  gfx->setTextColor(WHITE);
+  centerText(symbol, 4, 20);
+  centerText(price.c_str(), 3, 70);
+  centerText(change.c_str(), 2, 110);
+
+  // Battery voltage reading
+  int raw = analogRead(BATTERY_ADC_PIN);
+  float v_adc = (raw / ADC_MAX) * VREF;
+  float v_battery = v_adc * CALIBRATED_MULTIPLIER;
+
+  drawBatteryStatus(v_battery);
+}
+
+void loop() {
+  fetchMSTR();
+  fetchCRO();
+  fetchBTC();
+
+  showTickerScreen("MSTR", mstrPrice, mstrChange);
+  delay(10000);
+  showTickerScreen("CRO", croPrice, croChange);
+  delay(10000);
+  showTickerScreen("BTC", btcPrice, btcChange);
+  delay(10000);
+}
