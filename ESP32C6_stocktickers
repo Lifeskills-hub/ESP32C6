@@ -90,17 +90,33 @@ void fetchCRO() {
 
   if (httpCode == 200) {
     String payload = http.getString();
+    Serial.println("CRO Payload: " + payload);  // Debug output
+
     int pStart = payload.indexOf("usd\":") + 5;
     int pEnd = payload.indexOf(",", pStart);
     if (pEnd == -1) pEnd = payload.indexOf("}", pStart);
     float price = payload.substring(pStart, pEnd).toFloat();
 
-    int cStart = payload.indexOf("usd_24h_change\":") + 17;
+    int cStart = payload.indexOf("usd_24h_change\":") + 16; // Adjusted to include negative sign
     int cEnd = payload.indexOf("}", cStart);
-    float change = payload.substring(cStart, cEnd).toFloat();
+    String rawChange = payload.substring(cStart, cEnd);
+    rawChange.trim();
+    Serial.print("CRO Raw Change: "); Serial.println(rawChange); // Debug rawChange
+    float percentChange = rawChange.toFloat();
 
+    // Calculate previous price using API-provided percentage change
+    float previousPrice = price / (1 + percentChange / 100);
+    float change = price - previousPrice;
+
+    // Debug output
+    Serial.print("CRO Price: "); Serial.println(price, 6);
+    Serial.print("CRO Previous Price: "); Serial.println(previousPrice, 6);
+    Serial.print("CRO Change: "); Serial.println(change, 6);
+    Serial.print("CRO Percent Change: "); Serial.println(percentChange, 2);
+
+    // Format price and change strings
     croPrice = "$" + String(price, 4);
-    croChange = String((change >= 0 ? "+" : "")) + String(change, 2) + "%";
+    croChange = String(change >= 0 ? "+" : "") + String(change, 4) + " / " + String(percentChange, 2) + "%";
   } else if (httpCode == 429) {
     croPrice = "Rate Limit";
     croChange = "Exceeded";
@@ -117,17 +133,32 @@ void fetchBTC() {
   int httpCode = http.GET();
   if (httpCode == 200) {
     String payload = http.getString();
+    Serial.println("BTC Payload: " + payload);  // Debug output
 
     int pStart = payload.indexOf("\"price\":") + 8;
     int pEnd = payload.indexOf(",", pStart);
     float price = payload.substring(pStart, pEnd).toFloat();
 
-    int cStart = payload.indexOf("\"percent_change_24h\":") + 23;
+    int cStart = payload.indexOf("\"percent_change_24h\":") + 21;
     int cEnd = payload.indexOf(",", cStart);
-    float change = payload.substring(cStart, cEnd).toFloat();
+    String rawChange = payload.substring(cStart, cEnd);
+    rawChange.trim();
+    Serial.print("BTC Raw Change: "); Serial.println(rawChange); // Debug rawChange
+    float percentChange = rawChange.toFloat();
 
+    // Calculate previous price using API-provided percentage change
+    float previousPrice = price / (1 + percentChange / 100);
+    float change = price - previousPrice;
+
+    // Debug output
+    Serial.print("BTC Price: "); Serial.println(price, 2);
+    Serial.print("BTC Previous Price: "); Serial.println(previousPrice, 2);
+    Serial.print("BTC Change: "); Serial.println(change, 2);
+    Serial.print("BTC Percent Change: "); Serial.println(percentChange, 2);
+
+    // Format price and change strings
     btcPrice = "$" + String(price, 2);
-    btcChange = String((change >= 0 ? "+" : "")) + String(change, 2) + "%";
+    btcChange = String(change >= 0 ? "+" : "") + String(change, 2) + " / " + String(percentChange, 2) + "%";
   } else {
     btcPrice = "Error";
     btcChange = "Check API";
@@ -146,23 +177,20 @@ void centerText(const char* text, int textSize, int yOffset) {
 }
 
 void drawBatteryStatus(float voltage) {
-  int x = SCREEN_WIDTH - 60;  // Top-right corner
+  int x = SCREEN_WIDTH - 60;
   int y = 10;
-  int w = 50;  // Horizontal battery width
-  int h = 20;  // Battery height
+  int w = 50;
+  int h = 20;
   int nubW = 6, nubH = 8;
 
-  // Outline
   gfx->drawRect(x, y, w, h, WHITE);
-  gfx->fillRect(x + w, y + (h - nubH) / 2, nubW, nubH, WHITE);  // Battery nub
+  gfx->fillRect(x + w, y + (h - nubH) / 2, nubW, nubH, WHITE);
 
-  // Fill level
   float percent = constrain((voltage - 3.0) / 1.2, 0.0, 1.0);
   int fillWidth = percent * (w - 6);
   uint16_t fillColor = voltage >= 4.0 ? GREEN : (voltage >= 3.6 ? YELLOW : RED);
   gfx->fillRect(x + 3, y + 3, fillWidth, h - 6, fillColor);
 
-  // Percentage text below icon
   gfx->setTextSize(1);
   gfx->setTextColor(WHITE);
   gfx->setCursor(x, y + h + 2);
@@ -179,7 +207,6 @@ void showTickerScreen(const char* symbol, String price, String change) {
   centerText(price.c_str(), 3, 70);
   centerText(change.c_str(), 2, 110);
 
-  // Battery voltage reading
   int raw = analogRead(BATTERY_ADC_PIN);
   float v_adc = (raw / ADC_MAX) * VREF;
   float v_battery = v_adc * CALIBRATED_MULTIPLIER;
