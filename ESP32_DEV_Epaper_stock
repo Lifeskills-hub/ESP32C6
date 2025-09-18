@@ -28,24 +28,24 @@ unsigned long lastRefresh = 0;
 
 // Partial refresh zones
 #define STOCK_PRICE_X 20
-#define STOCK_PRICE_Y 50
+#define STOCK_PRICE_Y 40  // Moved up from 50 to avoid overlap with percentage
 #define STOCK_PRICE_W 100
-#define STOCK_PRICE_H 20  // Reduced from 25
+#define STOCK_PRICE_H 35
 
 #define STOCK_PERCENT_X 20
 #define STOCK_PERCENT_Y 75
 #define STOCK_PERCENT_W 100
-#define STOCK_PERCENT_H 20
+#define STOCK_PERCENT_H 30
 
 #define CRYPTO_PRICE_X 170
-#define CRYPTO_PRICE_Y 50
+#define CRYPTO_PRICE_Y 40  // Moved up from 50 to avoid overlap with percentage
 #define CRYPTO_PRICE_W 100
-#define CRYPTO_PRICE_H 20
+#define CRYPTO_PRICE_H 35
 
 #define CRYPTO_PERCENT_X 170
 #define CRYPTO_PERCENT_Y 75
 #define CRYPTO_PERCENT_W 100
-#define CRYPTO_PERCENT_H 20
+#define CRYPTO_PERCENT_H 30
 
 void setup() {
   Serial.begin(115200);
@@ -103,14 +103,14 @@ void drawStaticUI() {
   display.println("CRO");
 }
 
-void drawTextBox(int x, int y, int w, int h, const String& text, uint8_t textSize = 1) {
+void drawTextBox(int x, int y, int w, int h, const String& text, uint8_t textSize = 2) {
   display.setTextSize(textSize);
   display.fillRect(x, y, w, h, GxEPD_WHITE);
 
   int16_t tbx, tby; uint16_t tbw, tbh;
   display.getTextBounds(text, 0, 0, &tbx, &tby, &tbw, &tbh);
   int cx = x + (w - tbw) / 2;
-  int cy = y + (h - tbh) / 2 + tbh;
+  int cy = y + (h - tbh) / 2;
   display.setCursor(cx, cy);
   display.println(text);
   display.displayWindow(x, y, w, h);
